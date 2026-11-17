@@ -1,0 +1,66 @@
+## Interface: 16001
+## Title: Tintean
+## Notes: Guild events and bulletins from tintean.net.
+## Author: DrVeoj
+## Version: 0.1.0
+## IconTexture: Interface\AddOns\Tintean\icon
+## SavedVariables: Tintean
+## OptionalDeps: Tintean_Inbox
+## X-Tintean-Inbox: 1
+## X-Tintean-Export: 1
+
+Libs\LibStub.lua
+Libs\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1.lua
+Core\Init.lua
+Core\CopyBox.lua
+Core\Json.lua
+Core\Text.lua
+Core\Crc32.lua
+Core\Inflate.lua
+Core\Deflate.lua
+Core\Codec.lua
+Core\Pack.lua
+Core\Ids.lua
+Sync\Validate.lua
+Sync\Order.lua
+Sync\Store.lua
+Sync\Digest.lua
+Sync\Checks.lua
+Sync\Export.lua
+Core\SavedVars.lua
+Sync\Inbox.lua
+Net\Wire.lua
+Net\Reassembly.lua
+Net\Receive.lua
+Net\Gate.lua
+Net\Send.lua
+Net\Echo.lua
+Sync\Sync.lua
+Sync\Report.lua
+Moments\Clock.lua
+Moments\Store.lua
+Moments\Party.lua
+Moments\Events.lua
+Sync\Edit.lua
+Sync\Words.lua
+UI\Model.lua
+UI\Art.lua
+UI\Events.lua
+UI\Bulletins.lua
+UI\Roster.lua
+UI\Officers.lua
+UI\Arrivals.lua
+UI\Notices.lua
+UI\Settings.lua
+UI\Paste.lua
+UI\Frame.lua
+UI\EventsTab.lua
+UI\BulletinsTab.lua
+UI\RosterTab.lua
+UI\OfficersTab.lua
+UI\BulletinOfficersTab.lua
+UI\SettingsTab.lua
+UI\PasteTab.lua
+UI\Toasts.lua
+UI\Minimap.lua

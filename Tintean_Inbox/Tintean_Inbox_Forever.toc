@@ -1,0 +1,6 @@
+## Interface: 16001
+## Title: Tintean Inbox
+## Notes: Data written by the Tintean desktop app. Do not edit.
+## Author: DrVeoj
+
+Tintean_Inbox.lua
