@@ -3,8 +3,8 @@
 --   sent: stored as my pending edit and queued to go to the guild.
 --   kept: stored as my pending edit but nothing was queued (cannot send now, or the queue refused it); the
 --         edit stays pending and goes out with the next exchange.
--- Reasons: no_guild, not_on_roster, not_officer, forbidden (the author's name is not the roster's), not_held,
--- group_event, cancelled, ended, already_seen, pending_create (a create the server has not taken yet cannot be
+-- Reasons: note (a group's sign-up note over 120 letters), no_guild, not_on_roster, not_officer, forbidden (the author's name is not the roster's), not_held,
+-- group_event, cancelled (an edit of a cancelled event other than a reopen), ended (a reopen after the end), already_seen, pending_create (a create the server has not taken yet cannot be
 -- taken down), invalid, and the store's own word when it will not keep the edit (duplicate, lost).
 -- An edit is made on what is held (base, prev), stored as my pending edit, and sent once in `chg`.
 -- Warnings (needs_ack) are in Words.lua; the screens that call these are M20.14 on.
@@ -75,9 +75,11 @@ local function ended(b, now)
 end
 
 -- The edit itself. Returns "sent", "kept" or "refused: <reason>".
-local function make(g, me, name, kind, id, body, deleted, ack)
+-- `group`: a sign-up on a group's event. It is kept in `mine` and never sent to guildmates (decisions.md M33.12, 11.3): the
+-- desktop app (or the paste) takes it up from the export, and the server's own checks are the rules, so Checks.rules is skipped.
+local function make(g, me, name, kind, id, body, deleted, ack, group)
   local now = wall()
-  local cur = Store.current(g, kind, id)
+  local cur = Store.currentIn(g, group, kind, id)
   local base, prev = 0, null
   local epoch, rebase = g.epoch or 0, nil
   if cur and cur.pending then
@@ -91,6 +93,7 @@ local function make(g, me, name, kind, id, body, deleted, ack)
     if type(cur.at) == "number" and now <= cur.at then now = cur.at + 1 end
   elseif cur then
     base, prev = cur.rev, cur.cid
+    if base == 0 then prev = null end -- the server's rev 0 (a sign-up with no head yet): taken as a create
   end
   local change = { cid = ns.Ids.cid(), id = id, kind = kind, base = base, prev = prev,
     author = { roster = me.id, name = name }, at = now, deleted = deleted, body = deleted and null or body, ack = ack,
@@ -98,7 +101,7 @@ local function make(g, me, name, kind, id, body, deleted, ack)
   local res = Validate.check(change, now)
   if not res.ok then return refuse("invalid") end
   if name ~= Checks.rosterName(bodyOf(me)) then return refuse("forbidden") end
-  local why = Checks.rules(g, res.change, { now = now, rank = Checks.gameRank })
+  local why = not group and Checks.rules(g, res.change, { now = now, rank = Checks.gameRank }) or nil
   if why == "forbidden" then
     return refuse((kind == "event" or kind == "bulletin" or kind == "ranks") and "not_officer" or "invalid")
   elseif why == "unknown_author" then
@@ -106,9 +109,11 @@ local function make(g, me, name, kind, id, body, deleted, ack)
   elseif why then
     return refuse("invalid")
   end
-  local status = Store.applyPending(g, res.change, now, { own = true, counters = Sync.counters, rebase = rebase })
+  local opts = { own = true, counters = Sync.counters, rebase = rebase }
+  local status = group and Store.applyMinePending(g, res.change, now, opts) or Store.applyPending(g, res.change, now, opts)
   if status ~= "stored" then return refuse(tostring(status)) end
   Sync.touch()
+  if group then return "kept" end
   return Sync.sendOwn(g.pending[Store.slot(kind, id)]) and "sent" or "kept"
 end
 
@@ -122,21 +127,28 @@ local function start()
 end
 
 -- A guild event I may act on: held, live and the guild's own. Returns the record or a refusal.
-local function ownEvent(g, id)
+local function ownEvent(g, id, groupOk)
   local ev = Store.current(g, "event", id)
   if not live(ev) then return nil, refuse("not_held") end
   local grp = bodyOf(ev).group
-  if grp ~= nil and grp ~= null then return nil, refuse("group_event") end
+  if grp ~= nil and grp ~= null and not groupOk then return nil, refuse("group_event") end
   return ev
 end
 
+Edit.GROUP_NOTE = 120
+
 -- Sign up (or change a sign-up) as me. `extra`: role, note, and `ack` (the refs of warnings shown, Words.lua).
+-- A group's event takes it only from a character `mine.may` lists, with a note of at most 120 letters ("refused: note").
 function Edit.signUp(eventId, status, extra)
   local g, me, name, no = start()
   if no then return no end
-  local ev, bad = ownEvent(g, eventId)
+  local ev, bad = ownEvent(g, eventId, Store.mayOf(g, eventId, me.id))
   if bad then return bad end
   local b = bodyOf(ev)
+  local group = b.group ~= nil and b.group ~= null
+  if group and type(extra) == "table" and type(extra.note) == "string" and ns.Text.letters(extra.note) > Edit.GROUP_NOTE then
+    return refuse("note")
+  end
   if b.cancelled == true then return refuse("cancelled") end
   if ended(b, wall()) then return refuse("ended") end
   local id = eventId .. ":" .. me.id
@@ -147,10 +159,10 @@ function Edit.signUp(eventId, status, extra)
   end
   -- A held "<event>:c:<character>" sign-up is for a member with no roster row (README); I have one, so it is
   -- someone else's record and is not looked for here.
-  local cur = Store.current(g, "signup", id)
+  local cur = Store.currentIn(g, group, "signup", id)
   local body = merged(live(cur) and cur or nil, fields)
   if body.note == nil then body.note = null end -- README: the sign-up's fields are always all there
-  return make(g, me, name, "signup", id, body, false, ack)
+  return make(g, me, name, "signup", id, body, false, ack, group)
 end
 
 -- Mark a bulletin seen, as me (a create only: once seen, it stays).
@@ -183,13 +195,30 @@ function Edit.editEvent(id, fields)
   if no then return no end
   local ev, bad = ownEvent(g, id)
   if bad then return bad end
+  if bodyOf(ev).cancelled == true then
+    -- A held cancelled event takes only a reopen (README, Cancelling and reopening): {cancelled = false} and nothing else,
+    -- and not after the event would have ended (by this clock; the server's decides in the end).
+    local only = type(fields) == "table" and fields.cancelled == false
+    for k in pairs(fields or {}) do if k ~= "cancelled" then only = false end end
+    if not only then return refuse("cancelled") end
+    local b = bodyOf(ev)
+    -- `<=` is deliberate: the server reopens only while now < starts + duration, so at the end second it refuses (invalid,
+    -- body.cancelled). Do not change it to `<`.
+    if type(b.starts) == "number" and b.starts + (type(b.minutes) == "number" and b.minutes or 0) * 60 <= wall() then
+      return refuse("ended")
+    end
+  end
   return make(g, me, name, "event", id, merged(ev, fields), false)
 end
 
 function Edit.cancelEvent(id) return Edit.editEvent(id, { cancelled = true }) end
 
--- Undo is a new edit on top of the cancelling one, never a deletion of it.
-function Edit.undoCancel(id) return Edit.editEvent(id, { cancelled = false }) end
+-- Reopen sends the whole held body with `cancelled = false`, on top of the cancelling edit. Undo (just cancelled, not yet
+-- pulled) is the same edit: a new one on the cancelling one, never a deletion of it.
+function Edit.reopenEvent(id) return Edit.editEvent(id, { cancelled = false }) end
+Edit.undoCancel = Edit.reopenEvent
+
+-- The game has no way to delete an event: the site does that (a cancelled event only).
 
 function Edit.createBulletin(fields)
   local g, me, name, no = start()

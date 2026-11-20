@@ -76,21 +76,29 @@ function N.refusals(g, date)
     local who = nameOf(g, rosterId)
     local mine = who and (who .. "'s sign-up") or N.TEXT.yours
     local item
+    local ev0 = Store.current(g, "event", eventId)
+    local gname = type(bodyOf(ev0).group) == "table" and E.bound(bodyOf(ev0).group.name, 60) or nil
     if n.kind == "changed" then
-      local held = Store.current(g, "signup", n.id)
+      local held = Store.currentIn(g, n.web, "signup", n.id)
       local b = bodyOf(held)
       if live(held) and STATUS[b.status] then
         local now = STATUS[b.status] .. (ROLE[b.role] and (", " .. ROLE[b.role]) or "") .. "."
-        item = { title = "Someone changed " .. (who and (who .. "'s") or "your") .. " sign-up for " .. title .. " first. It now says:",
-          line = now }
+        if n.web then
+          item = { title = "Your sign-up for " .. title .. " was changed on tintean.net. Here is what it says now.", line = now }
+        else
+          item = { title = "Someone changed " .. (who and (who .. "'s") or "your") .. " sign-up for " .. title .. " first. It now says:",
+            line = now }
+        end
       end
+    elseif n.reason == "forbidden" and gname then
+      item = { title = "Not signed up for " .. title .. ". Only " .. gname .. "'s people can sign up for it." }
     elseif n.reason == "invalid" then
       item = { title = mine .. " for " .. title .. " couldn't be saved: " .. N.TEXT.cancelled .. ".", line = N.TEXT.dropped }
     elseif n.reason == "unknown_author" then
       item = { title = E.TEXT.unlisted[1], line = E.TEXT.unlisted[2] }
     elseif n.reason == "forbidden" then
       item = { title = N.TEXT.officers, line = "Your edit to " .. title
-        .. " is undone. Officer ranks are set in the guild settings on the website." }
+        .. " is undone. If you've just been promoted in the game, try again after the next sync." }
     else
       local ev = Store.current(g, "event", eventId)
       local ok, day = pcall(date, "%A", bodyOf(ev).starts)

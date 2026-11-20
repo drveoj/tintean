@@ -1376,6 +1376,13 @@ function Sync.reportLines()
   end
   lines[#lines + 1] = ns.tag .. " pending edits: " .. all .. " (" .. mine .. " made here, " .. (all - mine) .. " from guildmates)"
     .. (unchecked > 0 and (", " .. unchecked .. " not checked yet") or "") .. "."
+  local db = ns.state and ns.state.db
+  local m = g and g.mine
+  lines[#lines + 1] = ns.tag .. " saved data schema " .. (db and db.schema or 0) .. "."
+  lines[#lines + 1] = ns.tag .. " group sign-ups held: " .. (m and Store.count(m.records) or 0) .. ", group events open to you: "
+    .. (m and #m.may or 0) .. "."
+  local badMine = ns.state and ns.state.counters and ns.state.counters.bad_mine or 0
+  if badMine > 0 then lines[#lines + 1] = ns.tag .. " damaged rows ignored in your group sign-ups: " .. badMine .. "." end
   local words, dropped = {}, 0
   for name, label in pairs(CHECK_WORDS) do
     local n = Sync.counters[name] or 0

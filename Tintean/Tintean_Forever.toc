@@ -2,7 +2,7 @@
 ## Title: Tintean
 ## Notes: Guild events and bulletins from tintean.net.
 ## Author: DrVeoj
-## Version: 0.1.0
+## Version: 0.1.1
 ## IconTexture: Interface\AddOns\Tintean\icon
 ## SavedVariables: Tintean
 ## OptionalDeps: Tintean_Inbox

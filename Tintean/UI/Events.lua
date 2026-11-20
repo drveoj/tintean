@@ -228,6 +228,25 @@ local function dayParts(date, t)
   return (d:gsub("^(%a+) 0", "%1 ")), h
 end
 
+-- A group's counts from its record: whole numbers, 0 for anything that isn't a number or is below 0, shown no higher than 999.
+local function count(v)
+  if type(v) ~= "number" or v ~= v or v < 0 then return 0 end
+  return math.min(math.floor(v), 999)
+end
+local function countsOf(b)
+  local c = type(b.counts) == "table" and b.counts or {}
+  return count(c.yes), count(c.maybe)
+end
+
+-- A group's row sub after its name: "three in, one maybe"; one part when only one has anyone; "nobody's answered yet" when neither.
+local function groupCounts(b)
+  local yes, maybe = countsOf(b)
+  local parts = {}
+  if yes > 0 then parts[#parts + 1] = words(yes) .. " in" end
+  if maybe > 0 then parts[#parts + 1] = words(maybe) .. " maybe" end
+  return #parts > 0 and table.concat(parts, ", ") or "nobody's answered yet"
+end
+
 local function row(env, ev, by, ids)
   local b = ev.body
   local c = tally(by[ev.id])
@@ -242,8 +261,7 @@ local function row(env, ev, by, ids)
     r.sub = who and (bound(who, 40) .. " cancelled it") or nil -- no row in the table without a name: the sub line is left out
     r.status = "cancelled"
   elseif isGroup(b) then
-    local yes = type(b.counts) == "table" and tonumber(b.counts.yes) or 0
-    r.sub = (bound(b.group.name, 60) or "") .. "'s own · " .. (yes > 0 and (words(yes) .. " in") or "nobody yet")
+    r.sub = (bound(b.group.name, 60) or "") .. "'s · " .. groupCounts(b)
   else
     parts = { "The guild" }
     if ROW_ACT[b.activity] then parts[#parts + 1] = ROW_ACT[b.activity] end
@@ -353,6 +371,8 @@ E.TEXT = {
   refused = "Tinteán didn't accept that change.", -- the formats README's words for a reason it doesn't know; used for any local refusal
   over = "This event is over, so no more sign-ups.",
   sent = "Your sign-up is with guildmates online. The website gets it at the next logout by anyone with the desktop app.",
+  sentGroup = "Saved on this computer. The desktop app, or the For the website paste, takes it to tintean.net.", -- a group's sign-up goes to no guildmate
+  noteLong = "A note can be at most 120 letters.",
   pills = { { "yes", "I'm in" }, { "maybe", "Maybe" }, { "no", "Can't" } },
   roles = { tank = "Tank", healer = "Healer", dps = "Damage" },
 }
@@ -427,17 +447,43 @@ local function metaLine(b, ev)
   return table.concat(parts, " · ")
 end
 
-local function groupLine(b)
-  local c = type(b.counts) == "table" and b.counts or {}
-  local yes, maybe = tonumber(c.yes) or 0, tonumber(c.maybe) or 0
-  -- The sheet says "its four members"; the records carry only the answers, so the member count is left out.
-  local s = "Sign-up is with its members, on the website."
+-- "Three are in and one's a maybe." and its shorter forms; nil when nobody has answered. The records carry only the answers.
+local function countsLine(b)
+  local yes, maybe = countsOf(b)
   local ins = yes > 0 and (cap1(words(yes)) .. (yes == 1 and " is in" or " are in")) or nil
   local maybes = maybe > 0 and (maybe == 1 and "one's a maybe" or (words(maybe) .. " are maybes")) or nil
-  if ins and maybes then return s .. " " .. ins .. " and " .. maybes .. "." end
-  if ins then return s .. " " .. ins .. "." end
-  if maybes then return s .. " " .. cap1(maybes) .. "." end
-  return s
+  if ins and maybes then return ins .. " and " .. maybes .. "." end
+  if ins then return ins .. "." end
+  if maybes then return cap1(maybes) .. "." end
+  return nil
+end
+
+local function groupLine(b)
+  local c = countsLine(b)
+  return "Members sign up on tintean.net." .. (c and (" " .. c) or "")
+end
+
+-- The "Your sign-up" part of a page for the character logged in (`meId`): p.me and p.note, and what the answer held is
+-- (name, first name, status, role). `mySignup` is the version held (a group's is in `mine`); `hint` is the note box's.
+function E.myPart(g, p, meId, pick, mySignup, hint, max)
+  local meRec = Store.current(g, "roster", tostring(meId))
+  local myName = nameOf(meRec) or "?"
+  local myFirst = first(myName) or myName
+  local roles = E.rolesOf(bodyOf(meRec).class)
+  local st = live(mySignup) and bodyOf(mySignup).status or nil
+  local role = live(mySignup) and bodyOf(mySignup).role or nil
+  local chosen = pick or role
+  local fits = false
+  for _, r in ipairs(roles) do if r == chosen then fits = true end end
+  if not fits then chosen = roles[1] end
+  p.me = { name = myName, first = myFirst, line = classLine(meRec), color = E.classColor(bodyOf(meRec).class), class = type(bodyOf(meRec).class) == "string" and bodyOf(meRec).class or nil, roles = roles, role = chosen,
+    status = st, pending = (mySignup and mySignup.pending) or nil }
+  -- value is for a font string (pipes doubled); text is as written, for the edit box only, so a pipe doesn't double on each round trip
+  local held = live(mySignup) and bodyOf(mySignup).note or nil
+  p.note = { value = bound(held, ns.Text.CAPS.note), text = E.cut(held, ns.Text.CAPS.note), hint = hint, max = max }
+  -- A held note over the limit (not written here) is left out of the box, so answering again is never refused for it.
+  if max and type(held) == "string" and ns.Text.letters(held) > max then p.note.text = nil end
+  return myName, myFirst, st, role
 end
 
 -- The page for one event. `pick` is the role chosen on the page, if any. Returns nil when the event isn't held.
@@ -455,7 +501,18 @@ local function pageOf(env, eventId, pick)
     art = UI.Art.slugOf(type(b.place) == "table" and b.place.name or nil) }
   if isGroup(b) then
     p.state = "group"
-    p.banner = { (bound(b.group.name, 60) or "") .. "'s own event.", groupLine(b) }
+    local gname = bound(b.group.name, 60) or ""
+    -- A member (the server listed this character for this event in `mine.may`) signs up here; anyone else reads the counts.
+    if meId and not b.cancelled and not ended(b, now) and Store.mayOf(g, eventId, meId) then
+      local mySignup = Store.currentMine(g, "signup", eventId .. ":" .. tostring(meId))
+      local myName, myFirst, st = E.myPart(g, p, meId, pick, mySignup, "A note, if you like", ns.Edit.GROUP_NOTE)
+      p.groupEvent = true
+      p.banner = { gname .. "'s own event." .. (st == "yes" and (" You're in as " .. myName .. ".") or "") }
+      p.banner[2] = countsLine(b)
+      p.lines = st == nil and { myFirst .. " isn't signed up yet." } or {}
+    else
+      p.banner = { gname .. "'s own event.", groupLine(b) }
+    end
     return p
   end
   local who = first(type(ev.author) == "table" and ev.author.name)
@@ -488,7 +545,7 @@ local function pageOf(env, eventId, pick)
     local rr = Store.current(g, "roster", tostring(s.body.roster))
     local nm = nameOf(rr) or bound(s.body.name, 60) or "?"
     local cls = bodyOf(rr).class
-    local note = bound(s.body.note, 200)
+    local note = bound(s.body.note, ns.Text.CAPS.note)
     local entry = { name = nm, color = E.classColor(cls), class = type(cls) == "string" and cls or nil }
     local st, role = s.body.status, s.body.role
     if st == "yes" then
@@ -537,24 +594,8 @@ local function pageOf(env, eventId, pick)
   end
 
   -- my sign-up
-  local meRec = Store.current(g, "roster", tostring(meId))
-  local myName = nameOf(meRec) or "?"
-  local myFirst = first(myName) or myName
-  local roles = E.rolesOf(bodyOf(meRec).class)
-  -- the answer of the character I'm on (an alt's has its own line below)
-  local mySignup = Store.current(g, "signup", eventId .. ":" .. tostring(meId))
-  local st = live(mySignup) and bodyOf(mySignup).status or nil
-  local role = live(mySignup) and bodyOf(mySignup).role or nil
-  local chosen = pick or role
-  local fits = false
-  for _, r in ipairs(roles) do if r == chosen then fits = true end end
-  if not fits then chosen = roles[1] end
-  p.me = { name = myName, first = myFirst, line = classLine(meRec), color = E.classColor(bodyOf(meRec).class), class = type(bodyOf(meRec).class) == "string" and bodyOf(meRec).class or nil, roles = roles, role = chosen,
-    status = st, pending = (mySignup and mySignup.pending) or nil }
-  -- value is for a font string (pipes doubled); text is as written, for the edit box only, so a pipe doesn't double on each round trip
-  local held = live(mySignup) and bodyOf(mySignup).note or nil
-  p.note = { value = bound(held, 200), text = E.cut(held, 200),
-    hint = "A note" .. (p.organiser and (" for " .. p.organiser) or "") .. ", if you like" } -- "A note, if you like" has no row in the table
+  local myName, myFirst, st, role = E.myPart(g, p, meId, pick, Store.current(g, "signup", eventId .. ":" .. tostring(meId)),
+    "A note" .. (p.organiser and (" for " .. p.organiser) or "") .. ", if you like") -- "A note, if you like" has no row in the table
   local lines, altIn = {}, nil
   for i = 2, #ids do
     local altRec = Store.current(g, "roster", ids[i])

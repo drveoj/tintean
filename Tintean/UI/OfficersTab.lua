@@ -16,7 +16,7 @@ UI.OfficersTab = T
 
 local X, W = 16, 606
 local cv = { pools = {} }
-local P = { form = nil, places = {}, error = nil, undo = {}, told = {} } -- undo: events I cancelled while the window has been open
+local P = { form = nil, places = {}, error = nil, undo = {}, told = {}, ask = nil } -- ask: { id = } the event whose Cancel question is showing -- undo: events I cancelled while the window has been open
 local boxes = {}
 
 local function now()
@@ -167,6 +167,7 @@ function T.edit(id)
   if not cv.child or not T.can(env) then return end
   local ev = ns.Store.current(env.guild, "event", id)
   if not ev or ev.deleted then return end
+  if type(ev.body) == "table" and ev.body.group ~= nil and ev.body.group ~= ns.Json.null then return end -- a group's event is read-only here
   P.places = O.placesFor(env.guild, ev)
   P.form, P.error = O.fromEvent(env, ev, P.places), nil
   P.told[id] = nil
@@ -176,8 +177,12 @@ function T.edit(id)
   render()
 end
 
--- Cancel event (no confirm) and Undo: one edit each; a refusal is told in plain words and nothing changes.
+-- Cancel event (after a confirm), Reopen and Undo: one edit each; a refusal is told in plain words and nothing changes.
 local function change(id, fn, cancelled)
+  local g = Frame.env().guild
+  if type(g) ~= "table" then return end
+  local ev = ns.Store.current(g, "event", id)
+  if type(ev) == "table" and type(ev.body) == "table" and ev.body.group ~= nil and ev.body.group ~= ns.Json.null then return end -- a group's event is read-only here
   local ok, status = try(fn, id)
   local why = O.outcome(ok, status)
   P.told[id] = why
@@ -185,6 +190,8 @@ local function change(id, fn, cancelled)
   Frame.refresh(true)
   ET.draw()
 end
+
+T.change = change
 
 -- Opens the sheet for the day holding `stamp` (nil: tomorrow). Nothing happens unless I am an officer.
 function T.open(stamp)
@@ -311,6 +318,7 @@ end
 
 -- The Events tab's hooks: the button after the list or the empty line, and a click on an empty day.
 local function planButton(_, y, env)
+  P.ask = nil -- the list is showing, so no event page is: a Cancel question does not wait for a return
   if not T.can(env) then return y end
   K.button(X, y, 130, 28, O.TEXT.heading, function() T.open(nil) end, { bg = C.sea, ink = C.title, size = 13 })
   return y + 40
@@ -322,7 +330,18 @@ ET.hooks.canPlan, ET.hooks.built = T.can, T.build
 ET.hooks.openPage = function(p, x, y, env)
   if not T.can(env) then return y end
   K.button(x, y, 110, 28, O.TEXT.edit, function() T.edit(p.id) end, { bg = C.ground, edge = C.lineStrong, ink = C.body, size = 13 })
-  K.button(x + 118, y, 120, 28, O.TEXT.cancelEvent, function() change(p.id, ns.Edit.cancelEvent, true) end,
+  if P.ask and P.ask.id ~= p.id then P.ask = nil end -- a question belongs to the page it was asked on
+  if P.ask then
+    -- Cancel asks first: the question and its two buttons, drawn under Edit event; nothing is sent until the first.
+    y = y + 36
+    y = y + K.text(O.TEXT.cancelQ, X, y, { size = 13, color = C.body, width = W }) + 6
+    K.button(X, y, 120, 28, O.TEXT.cancelEvent, function() P.ask = nil; change(p.id, ns.Edit.cancelEvent, true) end,
+      { bg = C.ground, edge = C.flame, ink = C.flame, size = 13 })
+    K.button(X + 128, y, 100, 28, O.TEXT.keep, function() P.ask = nil; ET.draw() end,
+      { bg = C.ground, edge = C.lineStrong, ink = C.body, size = 13 })
+    return y + 32
+  end
+  K.button(x + 118, y, 120, 28, O.TEXT.cancelEvent, function() P.ask, P.told[p.id] = { id = p.id }, nil; ET.draw() end,
     { bg = C.ground, edge = C.flame, ink = C.flame, size = 13 })
   if P.told[p.id] then
     return y + K.text(P.told[p.id], X, y + 36, { size = 13, color = C.flame, width = W }) + 4
@@ -330,20 +349,33 @@ ET.hooks.openPage = function(p, x, y, env)
   return y
 end
 
--- A cancelled event's page: Undo while the window has been open since I cancelled it; or the words if an Undo was refused.
+-- True when the event would have ended by now (no reopening then; the server decides in the end).
+function T.ended(p, env)
+  local b = ns.Store.current(env.guild, "event", p.id)
+  b = b and b.body
+  if type(b) ~= "table" or type(b.starts) ~= "number" then return true end
+  return b.starts + (type(b.minutes) == "number" and b.minutes or 0) * 60 <= (env.now or now())
+end
+
+-- A cancelled event's page: Reopen event for an officer until it would have ended; Undo while the window has been open since I cancelled it; or the words if an Undo was refused.
 ET.hooks.cancelledPage = function(p, y, env)
+  P.ask = nil -- someone cancelled it meanwhile: no question left over
   if not T.can(env) then return y end
   if P.undo[p.id] then
     local h = K.text(O.TEXT.cancelledNow, X, y + 6, { size = 13, color = C.body, width = W - 90 })
     K.button(X + W - 80, y, 80, 28, O.TEXT.undo, function() change(p.id, ns.Edit.undoCancel, false) end,
       { bg = C.sea, ink = C.title, size = 13 })
     y = y + math.max(h + 6, 28) + 12
+  elseif not T.ended(p, env) then
+    K.button(X, y, 130, 28, O.TEXT.reopen, function() change(p.id, ns.Edit.reopenEvent, false) end,
+      { bg = C.sea, ink = C.title, size = 13 })
+    y = y + 40
   end
   if P.told[p.id] then y = y + K.text(P.told[p.id], X, y, { size = 13, color = C.flame, width = W }) + 12 end
   return y
 end
 
 -- The window is closed: Undo is no longer offered, and old words go.
-ET.hooks.hidden = function() P.undo, P.told = {}, {} end
+ET.hooks.hidden = function() P.undo, P.told, P.ask = {}, {}, nil end
 
 return T

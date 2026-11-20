@@ -27,8 +27,14 @@ end
 
 -- `now` stamps lastOn so a guild just made is never the "least recently logged in".
 function Store.new(name, now)
-  return { name = name, lastOn = now or 0, epoch = 0, cursor = zeroCursor(), floor = {}, top = {}, records = {}, pending = {}, settled = {} }
+  return { name = name, lastOn = now or 0, epoch = 0, cursor = zeroCursor(), floor = {}, top = {}, records = {}, pending = {}, settled = {},
+    mine = Store.newMine() }
 end
+
+-- The person's own sign-ups on their groups' events (decisions.md M33.12, 11.3). Kept apart from `records` and `pending`:
+-- no digest, `pd`, `chg` or transfer ever reads it. records[slot] are README signup records, may is { event, roster } pairs,
+-- pending are the person's own edits (made from M33.19), exported with the changes.
+function Store.newMine() return { rev = 0, records = {}, pending = {}, may = {} } end
 
 function Store.slot(kind, id) return kind .. "|" .. id end
 
@@ -81,12 +87,13 @@ local function capBy(map, cap, stampOf, counters, counter)
 end
 
 local function got(v) return v.got end
+-- Over the pending cap, guildmates' edits go before my own (an own sign-up may be the only copy).
+local function pendingStamp(p) return (p.own and 1e12 or 0) + (p.got or 0) end
 local function identity(t) return t end
 
 -- The two small caps, applied wherever something is added.
 local function capSmall(guild, counters)
-  -- Over the pending cap, guildmates' edits go before my own (an own sign-up may be the only copy).
-  capBy(guild.pending, Store.CAPS.pending, function(p) return (p.own and 1e12 or 0) + (p.got or 0) end, counters, "cap_pending")
+  capBy(guild.pending, Store.CAPS.pending, pendingStamp, counters, "cap_pending")
   capBy(guild.settled, Store.CAPS.settled, identity, counters, "cap_settled")
 end
 
@@ -170,6 +177,31 @@ function Store.applyPending(guild, change, now, opts)
   return result
 end
 
+-- `mine` (the person's own sign-ups on their groups' events) shaped as a guild, so Store.current and Store.applyPending
+-- work on it unchanged. The tables are mine's own: what they set or drop is set or dropped there. Settled cids are the guild's.
+local function mineView(guild)
+  local m = guild.mine
+  return { records = m.records, pending = m.pending, settled = guild.settled, epoch = guild.epoch }
+end
+function Store.currentMine(guild, kind, id) return guild.mine and Store.current(mineView(guild), kind, id) or nil end
+-- The held version in `mine` when `group` is truthy (and `mine` holds it), otherwise in the guild.
+function Store.currentIn(guild, group, kind, id)
+  return group and Store.currentMine(guild, kind, id) or Store.current(guild, kind, id)
+end
+function Store.applyMinePending(guild, change, now, opts)
+  guild.mine = guild.mine or Store.newMine()
+  return Store.applyPending(mineView(guild), change, now, opts)
+end
+
+-- Whether the character with roster key `roster` may sign up for the group's event `event`: the server listed the pair in `may`.
+function Store.mayOf(guild, event, roster)
+  local m = guild.mine
+  for _, w in ipairs(type(m) == "table" and type(m.may) == "table" and m.may or {}) do
+    if w.event == event and w.roster == roster then return true end
+  end
+  return false
+end
+
 -- Every id that begins "<parent>:" belongs to that event or bulletin.
 local function parentOf(id) return id:match("^([^:]+):") end
 
@@ -204,6 +236,16 @@ local function sane(r)
   return true
 end
 
+-- Pending edits held longer than the days cap go.
+local function expirePending(map, now, counters)
+  for slot, p in pairs(map) do
+    if (p.got or 0) < now - Store.CAPS.days * DAY then
+      map[slot] = nil
+      bump(counters, "expired")
+    end
+  end
+end
+
 function Store.prune(guild, now, counters)
   local recs = guild.records
   local drop = {}
@@ -230,11 +272,11 @@ function Store.prune(guild, now, counters)
   end
   for slot in pairs(drop) do recs[slot] = nil end
   dropOrphans(recs)
-  for slot, p in pairs(guild.pending) do
-    if (p.got or 0) < now - Store.CAPS.days * DAY then
-      guild.pending[slot] = nil
-      bump(counters, "expired")
-    end
+  expirePending(guild.pending, now, counters)
+  local m = guild.mine
+  if type(m) == "table" and type(m.pending) == "table" then -- my own group sign-ups wait on the same terms
+    expirePending(m.pending, now, counters)
+    capBy(m.pending, Store.CAPS.pending, pendingStamp, counters, "cap_pending")
   end
   for cid, t in pairs(guild.settled) do
     if t < now - Store.CAPS.days * DAY then guild.settled[cid] = nil end
@@ -305,6 +347,8 @@ function Store.newEpoch(guild, epoch, now, counters, name)
   local was = guild.epoch or 0
   bump(counters, "epoch_dropped", count(guild.records))
   guild.records, guild.settled, guild.words = {}, {}, {}
+  local m = guild.mine or Store.newMine()
+  guild.mine = { rev = 0, records = {}, pending = m.pending or {}, may = {} } -- a new table: the held one may be shared
   guild.cursor, guild.floor, guild.top = zeroCursor(), {}, {}
   guild.epoch = epoch
   if was ~= 0 then
@@ -315,19 +359,35 @@ function Store.newEpoch(guild, epoch, now, counters, name)
   return was
 end
 
--- After a snapshot of epoch `guild.epoch` is held: a pending edit made in another epoch gets the rev now held for its slot
--- (or 0); one of this epoch has none.
-function Store.rebase(guild)
-  for slot, p in pairs(guild.pending) do
-    p = copy(p) -- the table in hand may be shared with a copy kept in case the apply fails
-    if (p.epoch or 0) ~= (guild.epoch or 0) then
-      local r = guild.records[slot]
+-- The pending edits as copies (the tables in hand may be shared with a copy kept in case the apply fails): one made in
+-- another epoch than `epoch` gets the rev now held for its slot in `records` (or 0); one of this epoch has none.
+local function rebasePending(pending, records, epoch)
+  local out = {}
+  for slot, p in pairs(pending) do
+    p = copy(p)
+    if (p.epoch or 0) ~= (epoch or 0) then
+      local r = records[slot]
       p.rebase = r and r.rev or 0
     else
       p.rebase = nil
     end
-    guild.pending[slot] = p
+    out[slot] = p
   end
+  return out
+end
+
+-- After a snapshot of epoch `guild.epoch` is held: see rebasePending.
+function Store.rebase(guild)
+  for slot, p in pairs(rebasePending(guild.pending, guild.records, guild.epoch)) do
+    guild.pending[slot] = p -- in place, as before
+  end
+end
+
+-- The same for the pending edits in `mine`, against the sign-ups held there (called once `mine` is replaced).
+function Store.rebaseMine(guild)
+  local m = guild.mine
+  if not m then return end
+  m.pending = rebasePending(m.pending, m.records, guild.epoch)
 end
 
 -- After Store.rebase: an edit whose cid is the cid of the record held for its slot is the one the server took; it is
@@ -342,11 +402,34 @@ function Store.settleTaken(guild, now)
   end
 end
 
+-- After `mine` is replaced and rebased: an edit whose cid is the cid of the sign-up held is the one the server took and is
+-- settled quietly; one the held version beats by the key (the website's, a refusal's correction) is dropped and settled.
+-- Returns the ones that lost, as { { p, r } } (my edit, the version that won), for the caller to tell the person.
+function Store.settleMine(guild, now)
+  local lost = {}
+  local m = guild.mine
+  if not m then return lost end
+  for slot, p in pairs(m.pending) do
+    local r = m.records[slot]
+    if r and r.cid == p.cid then
+      m.pending[slot] = nil
+      guild.settled[p.cid] = now
+    elseif r and not pendingBeats(p, r) then
+      m.pending[slot] = nil
+      guild.settled[p.cid] = now
+      lost[#lost + 1] = { p = p, r = r }
+    end
+  end
+  return lost
+end
+
 -- Clear this guild's data: server versions, cursors, floors and settled go, and so do the source (`src`) and the inbox
 -- last applied (`inbox`), so the client is a source of `none` again; pending edits stay.
 function Store.clear(guild)
   guild.epoch = 0
   guild.src, guild.inbox = nil, nil
   guild.records, guild.settled = {}, {}
+  local m = guild.mine -- what the server said goes; the person's own pending edits stay
+  guild.mine = { rev = 0, records = {}, pending = m and m.pending or {}, may = {} }
   guild.cursor, guild.floor, guild.top = zeroCursor(), {}, {}
 end

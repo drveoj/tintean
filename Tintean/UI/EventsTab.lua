@@ -341,12 +341,13 @@ end
 T.open = function(id) blur(); S.page = id; if Frame.show("events") then render() end end
 
 -- After an edit: the page shows what is held now (a pending sign-up is held), and the status line says where it has got to.
-local function after(id, ok, res)
+local function after(id, ok, res, group)
   if ok and (res == "sent" or res == "kept") then
     S.said[id] = nil
-    if res == "sent" then UI.statusNote = { text = E.TEXT.sent, untilAt = now() + 30 } end
+    if res == "sent" then UI.statusNote = { text = E.TEXT.sent, untilAt = now() + 30 }
+    elseif group then UI.statusNote = { text = E.TEXT.sentGroup, untilAt = now() + 30 } end
   else
-    S.said[id] = E.TEXT.refused
+    S.said[id] = res == "refused: note" and E.TEXT.noteLong or E.TEXT.refused
   end
   Frame.refresh(true)
   render()
@@ -356,7 +357,7 @@ local function signUp(p, status)
   local note = noteText()
   local extra = { role = p.me.role, note = note ~= "" and note or ns.Json.null }
   local ok, res = try(ns.Words.signUp, p.id, status, extra)
-  after(p.id, ok, res)
+  after(p.id, ok, res, p.groupEvent)
 end
 
 local function signUpAnyway(p, word)
@@ -367,7 +368,7 @@ local function signUpAnyway(p, word)
   else
     ok, res = try(ns.Words.signUpAnyway, p.id)
   end
-  after(p.id, ok, res)
+  after(p.id, ok, res, p.groupEvent)
 end
 
 -- *Post in guild chat*: one line, as the player, from this click only. During the chat lockdown (or if the game
@@ -649,6 +650,7 @@ local function drawSignup(p, y)
   if eb then
     call(eb, "ClearAllPoints")
     call(eb, "SetPoint", "TOPLEFT", cv.child, "TOPLEFT", X + 14 + 3 * 96 + 10, -y)
+    call(eb, "SetMaxLetters", p.note.max or 200)
     call(eb, "SetSize", W - 14 * 2 - 3 * 96 - 10, 30)
     call(eb.hint, "SetText", p.note.hint)
     if cv.noteFor ~= p.id then
@@ -704,7 +706,11 @@ local function drawPage(env)
     y = yy + 24
     if p.state == "cancelled" and T.hooks.cancelledPage then y = T.hooks.cancelledPage(p, y, env) or y end -- Undo, for an officer
   end
-  if p.state == "group" then return y end
+  if p.state == "group" and not p.me then return y end
+  if p.state == "group" then -- a member: the word, then the pills, and no list of who is in (their names stay on the website)
+    local ok, word = try(ns.Words.forEvent, p.id)
+    return drawSignup(p, drawWord(p, ok and word or nil, y))
+  end
   if p.state == "open" then
     local ok, word = try(ns.Words.forEvent, p.id)
     y = drawWord(p, ok and word or nil, y)

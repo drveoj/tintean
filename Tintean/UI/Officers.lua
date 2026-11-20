@@ -16,6 +16,9 @@ O.TEXT = {
   heading = "Plan an event", title = "Title", what = "What", where = "Where", day = "Day", how = "How long", size = "Size",
   wanted = "Wanted", plan = "The plan", create = "Create event", cancel = "Cancel",
   edit = "Edit event", save = "Save event", cancelEvent = "Cancel event", undo = "Undo", -- the Officers table's
+  reopen = "Reopen event", keep = "Keep it", -- Reopen event is the website's; Keep it is the bulletin question's
+  alreadyCancelled = "It has already been cancelled.", cantReopen = "It has ended, so it can't be reopened.",
+  cancelQ = "Cancel this event? It shows as cancelled in the game now and on the website after the next sync, but nobody is sent a notice. You can reopen it until it would have ended.",
   cancelledNow = "Guildmates online see it cancelled now.", -- the Officers table's
   starts = "Starts, your time", -- for Joe to read: the table's "Starts, the guild's time", but the game has only the player's clock
   none = "None", -- for Joe to read: Where when no place is chosen (the bulletin sheet's "None")
@@ -216,6 +219,8 @@ function O.refusal(status)
   if status == "sent" or status == "kept" then return nil end
   if status == "refused: not_officer" or status == "refused: forbidden" then return O.TEXT.notOfficer end
   if status == "refused: not_on_roster" then return O.TEXT.notOnRoster end
+  if status == "refused: cancelled" then return O.TEXT.alreadyCancelled end
+  if status == "refused: ended" then return O.TEXT.cantReopen end
   return E.TEXT.refused
 end
 

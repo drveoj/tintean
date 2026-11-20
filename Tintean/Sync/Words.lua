@@ -42,14 +42,23 @@ local function textsOf(list)
   return texts
 end
 
+-- Where the sign-ups for an event are held: a group's event's in `mine`, the guild's own in the guild.
+local function held(g, eventId)
+  local ev = g.records["event|" .. eventId]
+  local grp = type(ev) == "table" and type(ev.body) == "table" and ev.body.group
+  if grp ~= nil and grp ~= ns.Json.null and type(g.mine) == "table" then return g.mine end
+  return g
+end
+
 -- The entry of `words` that is still to be answered for this event: mine, not dismissed, the correction it
 -- came with still the held version, and no newer edit of mine pending on the sign-up.
 local function activeWord(g, me, eventId)
   local slot = Store.slot("signup", eventId .. ":" .. me.id)
-  if g.pending[slot] then return nil end
-  local held = g.records[slot]
+  local at = held(g, eventId)
+  if at.pending[slot] then return nil end
+  local rec = at.records[slot]
   for _, w in ipairs(g.words or {}) do
-    if w.event == eventId and w.roster == me.id and not (g.dismissed or {})[w.cid] and held and held.rev == w.rev then
+    if w.event == eventId and w.roster == me.id and not (g.dismissed or {})[w.cid] and rec and rec.rev == w.rev then
       return w
     end
   end
@@ -59,17 +68,18 @@ end
 -- It carries no text, so it needs no person check: it is about my own edit.
 local function relayedNotice(g, me, eventId)
   local id = eventId .. ":" .. me.id
-  if g.pending[Store.slot("signup", id)] then return nil end
-  local held = g.records[Store.slot("signup", id)]
+  local at = held(g, eventId)
+  if at.pending[Store.slot("signup", id)] then return nil end
+  local rec = at.records[Store.slot("signup", id)]
   for _, n in pairs(g.notices or {}) do
-    if n.kind == "needs_ack_relayed" and n.id == id and held and held.rev == n.rev then return n end
+    if n.kind == "needs_ack_relayed" and n.id == id and rec and rec.rev == n.rev then return n end
   end
 end
 
 -- What to show on an event for the character logged in, or nil.
 --   { cid, warnings = { { code, ref, text } }, refs, texts }  a refused sign-up's warnings (`cid` is the entry's),
 --   { ahead = true, warnings, refs, texts }                   warnings the server would raise now,
---   { relayed = true, cid }                                   needs_ack with nothing to read: sign up on the website.
+--   { relayed = true, cid }                                   needs_ack with nothing to read: sign up on tintean.net.
 function Words.forEvent(eventId)
   local g, me = mine(true)
   if not g then return nil end

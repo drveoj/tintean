@@ -14,6 +14,9 @@ Text.CAPS = { title = 80, text = 600, notes = 2000, note = 200, name = 80, warni
 
 local sbyte, ssub = string.byte, string.sub
 
+-- A letter is a character, not a byte (the game's Lua has no utf8 library): the count of non-continuation bytes.
+function Text.letters(s) return select(2, s:gsub("[^\128-\191]", "")) end
+
 -- Width of the well-formed UTF-8 character at byte i (no overlongs, surrogates or past U+10FFFF), or 0.
 local function width(s, i)
   local b = sbyte(s, i)

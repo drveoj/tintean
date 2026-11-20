@@ -39,6 +39,8 @@ end
 function Export.changes(guild)
   local list = {}
   for _, p in pairs(guild.pending) do list[#list + 1] = p end
+  -- The person's own group sign-ups wait in `mine.pending` and go up the same way (decisions.md M33.12, 11.3).
+  for _, p in pairs(guild.mine and guild.mine.pending or {}) do list[#list + 1] = p end
   table.sort(list, function(a, b)
     local ka, kb = KIND_ORDER[a.kind] or 9, KIND_ORDER[b.kind] or 9
     if ka ~= kb then return ka < kb end
@@ -161,6 +163,7 @@ local function signature(guild, held, limits)
     guild.inbox and guild.inbox.rev or 0 }
   local pending = 0
   for _ in pairs(guild.pending or {}) do pending = pending + 1 end
+  for _ in pairs(guild.mine and guild.mine.pending or {}) do pending = pending + 1 end
   parts[#parts + 1] = pending
   for _, h in ipairs(held) do
     local marks = 0

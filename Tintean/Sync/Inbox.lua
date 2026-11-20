@@ -335,6 +335,66 @@ local function cleanAhead(list, counters)
   return out
 end
 
+-- The person's own sign-ups on their groups' events (decisions.md M33.12, 11.3; game.md section 12): `mine` replaces what is
+-- held whole, and absent means none. It is kept only when the logged-in character's roster record is found (and, for an
+-- inbox, carries the inbox's `person`, the rule for words), and only for that character's own roster key. A paste carries no
+-- person, but only the signed-in person's rows, so the roster key is the check. Pending edits in it stay and are rebased.
+-- Never in a digest, `pd`, `chg` or a transfer: nothing else reads it.
+Inbox.MAX_MINE = 300
+function Inbox.applyMine(guild, payload, counters, paste, now)
+  local old = guild.mine or Store.newMine()
+  local m = { rev = 0, records = {}, pending = {}, may = {} }
+  for slot, p in pairs(old.pending or {}) do m.pending[slot] = p end
+  guild.mine = m
+  local raw = payload.mine
+  if isObj(raw) and ns.Edit then
+    local ok, me = pcall(ns.Edit.me, guild)
+    local b = ok and me and me.body
+    -- An unknown character name at read time (no roster record yet) leaves `me` nil: `mine` is empty until the next inbox or paste.
+    -- A paste has no person to compare; if the guild already holds one, a paste that names another is not ours.
+    local pasteOk = paste and (payload.person == nil or payload.person == null or guild.person == nil or payload.person == guild.person)
+    local trusted = type(b) == "table" and (pasteOk or (not paste and type(b.person) == "string" and b.person == payload.person))
+    if trusted and isInt(raw.rev) and raw.rev >= 0 then
+      m.rev = raw.rev
+      for _, w in ipairs(isList(raw.may) and raw.may or {}) do
+        if isObj(w) and V.uuid(w.event) and V.rosterKey(w.roster) then
+          if w.roster == me.id and #m.may < Inbox.MAX_MINE then m.may[#m.may + 1] = { event = w.event, roster = w.roster } end
+        else
+          bump(counters, "bad_mine")
+        end
+      end
+      local list = isList(raw.records) and raw.records or {}
+      for i = 1, math.min(#list, Inbox.MAX_MINE) do
+        local r = list[i]
+        -- A sign-up the server holds with no head comes as rev 0 and cid "srv-0": checked as rev 1 and a cid of the usual length.
+        local head0 = isObj(r) and r.rev == 0 and r.cid == "srv-0"
+        -- checkRecord wants rev >= 1 and a cid of 8+ characters: lend it both, then put the server's own back on the raw row and the clean copy.
+        if head0 then r.rev, r.cid = 1, "srv-0-000" end
+        local rec = checkRecord(r)
+        if head0 then r.rev, r.cid = 0, "srv-0" end
+        if rec and rec.kind == "signup" then
+          local _, roster = Validate.splitSignupId(rec.id)
+          if roster == me.id then
+            if head0 then rec.rev, rec.cid = 0, "srv-0" end
+            m.records[Store.slot("signup", rec.id)] = rec
+          end
+        elseif not rec then
+          bump(counters, "bad_mine")
+        end
+      end
+    end
+  end
+  Store.rebaseMine(guild)
+  -- My own edits the server took are settled; one that lost is told. A refusal names its cid; else it was the website's.
+  now = now or 0
+  guild.notices = guild.notices or {}
+  for _, l in ipairs(Store.settleMine(guild, now)) do
+    local ref = l.r.refused
+    local tell = type(ref) == "table" and ref.cid == l.p.cid and { reason = ref.reason, character = l.p.author and l.p.author.name } or nil
+    Inbox.noticeFor(guild, l.p, tell, now, m.records, tell == nil)
+  end
+end
+
 local function shallow(t)
   local c = {}
   for k, v in pairs(t) do c[k] = v end
@@ -351,9 +411,11 @@ local function workingCopy(g)
 end
 
 -- A pending edit that lost: its cid is settled by Store; tell the person why (a word, a refusal, or "changed first").
-local function noticeFor(guild, p, tell, now)
+-- `recs` is where the server's versions are held (a group sign-up's are in `mine`).
+local function noticeFor(guild, p, tell, now, recs, web)
   if not p.own then return end
-  local took = guild.records[Store.slot(p.kind, p.id)]
+  recs = recs or guild.records
+  local took = recs[Store.slot(p.kind, p.id)]
   if took and took.cid == p.cid then return end -- the server took it: nothing lost
   local word
   for _, w in ipairs(guild.words or {}) do
@@ -364,13 +426,13 @@ local function noticeFor(guild, p, tell, now)
     n = { kind = "word", cid = p.cid, event = word.event }
   elseif tell and tell.reason == "needs_ack" then -- a guildmate's app carried it: nothing to read (game.md section 9)
     local event = Validate.splitSignupId(p.id)
-    local held = guild.records[Store.slot(p.kind, p.id)]
+    local held = recs[Store.slot(p.kind, p.id)]
     n = { kind = "needs_ack_relayed", cid = p.cid, id = p.id, event = event, rev = held and held.rev,
       reason = tell.reason, character = tell.character }
   elseif tell then
     n = { kind = "refused", cid = p.cid, id = p.id, reason = tell.reason, character = tell.character }
   else
-    n = { kind = "changed", cid = p.cid, id = p.id }
+    n = { kind = "changed", cid = p.cid, id = p.id, web = web or nil }
   end
   n.at = now
   guild.notices[p.cid] = n
@@ -486,6 +548,7 @@ local function applyPayload(guild, payload, entry, meta, now, counters)
     guild.floor[k] = payload.floor
   end
   guild.key, guild.lastOn, guild.person = entry.key, now, payload.person
+  Inbox.applyMine(guild, payload, counters, false, now)
   guild.src = "inbox" -- the file now supplies this guild's data; a paste before it no longer describes it
   if type(payload.name) == "string" and #payload.name <= 200 then guild.name = payload.name end
   guild.inbox = { at = meta.at, rev = top, crc = meta.crc, len = meta.len }

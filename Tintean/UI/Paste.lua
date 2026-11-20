@@ -63,6 +63,7 @@ end
 function P.outgoing(slug, guild, db, now, limits)
   local n = 0
   for _ in pairs(type(guild) == "table" and guild.pending or {}) do n = n + 1 end
+  for _ in pairs(type(guild) == "table" and type(guild.mine) == "table" and guild.mine.pending or {}) do n = n + 1 end
   local report = type(guild) == "table" and type(guild.report) == "table"
   local held = #ns.Export.heldMoments(db, guild) > 0
   if n == 0 and not report and not held then return { count = 0, line = P.TEXT.nothing } end
@@ -189,6 +190,7 @@ local function apply(db, slug, payload, ctx)
     if not left[k] then g.cursor[k] = payload.rev end
     g.floor[k] = payload.rev
   end
+  Inbox.applyMine(g, payload, ctx.counters, true, ctx.now)
   g.src, g.lastOn = "paste", ctx.now
   Store.prune(g, ctx.now, ctx.counters)
   Store.retop(g)

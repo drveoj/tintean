@@ -10,7 +10,7 @@ ns.SavedVars = SV
 local Json, Store = ns.Json, ns.Store
 local null = Json.null
 
-SV.SCHEMA = 4
+SV.SCHEMA = 5
 SV.PROTO = 1
 SV.ERROR_RING = 50
 -- MIGRATIONS[n](db) turns a schema n-1 table into schema n.
@@ -56,6 +56,14 @@ SV.MIGRATIONS[4] = function(db)
         end
       end
     end
+  end
+end
+
+-- 5: `mine` (decisions.md M33.12, 11.3): each guild gets an empty store of the person's own sign-ups on their groups' events.
+-- Nothing else changes.
+SV.MIGRATIONS[5] = function(db)
+  for _, g in pairs(type(db.guilds) == "table" and db.guilds or {}) do
+    if type(g) == "table" and g.mine == nil then g.mine = { rev = 0, records = {}, pending = {}, may = {} } end
   end
 end
 
@@ -128,23 +136,40 @@ local function remark(e)
   end
 end
 
+local function remarkAll(t)
+  if type(t) ~= "table" then return end
+  for _, e in pairs(t) do
+    if type(e) == "table" then remark(e) end
+  end
+end
+
 function SV.thaw(db)
   if not db.guilds then return end
   walk(db.guilds, thawOne, 0)
   for _, g in pairs(db.guilds) do
     if type(g) == "table" then
-      for _, f in ipairs({ "records", "pending" }) do
-        if type(g[f]) == "table" then
-          for _, e in pairs(g[f]) do
-            if type(e) == "table" then remark(e) end
-          end
-        end
-      end
+      for _, f in ipairs({ "records", "pending" }) do remarkAll(g[f]) end
+      if type(g.mine) == "table" then remarkAll(g.mine.pending) end
     end
   end
 end
 
 local TABLE_FIELDS = { "records", "pending", "settled", "cursor", "floor", "top", "dismissed", "seenHere", "notices", "words", "ahead" }
+
+local function whole(x) return type(x) == "number" and x >= 0 and x == math.floor(x) and x < math.huge end
+
+-- A pending edit without a cid or a time is dropped; a non-whole epoch becomes the guild's, a non-whole rebase goes.
+local function repairPending(pending, epoch, counters)
+  for slot, p in pairs(pending) do
+    if type(p.cid) ~= "string" or type(p.at) ~= "number" then
+      pending[slot] = nil
+      bump(counters, "pending_damaged")
+    else
+      if p.epoch ~= nil and not whole(p.epoch) then p.epoch = epoch end
+      if p.rebase ~= nil and not whole(p.rebase) then p.rebase = nil end
+    end
+  end
+end
 
 -- Whether a guild's table has the shape Store works with; fills what is missing.
 local function repairGuild(key, g, counters)
@@ -163,17 +188,21 @@ local function repairGuild(key, g, counters)
   for _, v in pairs(g.settled or {}) do
     if type(v) ~= "number" then return nil end
   end
-  for slot, p in pairs(g.pending or {}) do
-    if type(p.cid) ~= "string" or type(p.at) ~= "number" then
-      g.pending[slot] = nil
-      bump(counters, "pending_damaged")
-    end
-  end
-  local function whole(x) return type(x) == "number" and x >= 0 and x == math.floor(x) and x < math.huge end
   if not whole(g.epoch) then g.epoch = 0 end
-  for _, p in pairs(g.pending or {}) do
-    if p.epoch ~= nil and not whole(p.epoch) then p.epoch = g.epoch end
-    if p.rebase ~= nil and not whole(p.rebase) then p.rebase = nil end
+  repairPending(g.pending or {}, g.epoch, counters)
+  if type(g.mine) ~= "table" then g.mine = nil end -- Store.new supplies an empty one below; the guild and its pending stay
+  if g.mine ~= nil then -- a damaged part of `mine` is made empty; the rest of the guild is not lost for it
+    local m = g.mine
+    for _, f in ipairs({ "records", "pending", "may" }) do
+      if type(m[f]) ~= "table" then m[f] = {} end
+    end
+    if not whole(m.rev) then m.rev = 0 end
+    for _, f in ipairs({ "records", "pending" }) do
+      for slot, v in pairs(m[f]) do
+        if type(v) ~= "table" then m[f][slot] = nil end
+      end
+    end
+    repairPending(m.pending, g.epoch, counters)
   end
   local base = Store.new(g.name or key, 0)
   for k, v in pairs(base) do
