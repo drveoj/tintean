@@ -287,7 +287,7 @@ function Frame.syncTabs()
     call(t.button, "SetWidth", width)
     call(t.button, "ClearAllPoints")
     call(t.button, "SetPoint", "TOPLEFT", f, "TOPLEFT", left, -(TITLE_H + 1))
-    call(t.button, "Show")
+    call(t.button, Frame.sheet and "Hide" or "Show") -- a sheet replaces the tab strip with its own header
     left = left + width + 2
   end
   for key, t in pairs(Frame.tabs) do
@@ -306,6 +306,50 @@ function Frame.syncTabs()
   return changed
 end
 UI.onTabs = function() Frame.syncTabs() end
+
+-- The sheet header that stands in the tab strip's band: "‹ Back", the title with the gold rule under it, and a count
+-- at the right. The chevron is two lines, as the close X is drawn. Starts hidden; Frame.setSheet fills and shows it.
+function Frame.buildBand(f)
+  local top = -(TITLE_H + 1)
+  local back = button(f, 76, TABS_H, function() if Frame.sheet and Frame.sheet.back then try(Frame.sheet.back) end end)
+  call(back, "SetPoint", "TOPLEFT", f, "TOPLEFT", 8, top)
+  local label = text(back, 13, C.moss)
+  call(label, "SetPoint", "LEFT", 14, 0)
+  for _, sign in ipairs({ 1, -1 }) do
+    local line = fill(back, C.moss, "ARTWORK")
+    call(line, "SetSize", 6, 2)
+    call(line, "SetPoint", "CENTER", back, "LEFT", 6 + 2.1, -sign * 2.1)
+    call(line, "SetRotation", math.rad(45) * sign)
+  end
+  local title = text(f, 16, C.title, "display")
+  local count = text(f, 12, C.muted)
+  call(count, "SetPoint", "RIGHT", f, "TOPRIGHT", -16, top - TABS_H / 2)
+  local rule = fill(f, C.gold, "OVERLAY")
+  call(rule, "SetHeight", 2)
+  f.band = { back = back, label = label, title = title, count = count, rule = rule }
+  Frame.setSheet(Frame.sheet)
+end
+
+-- A sheet laid over the open tab ({ title, count, backLabel, back, close }) or none (nil). While one is open the tabs
+-- and their red counts are hidden (the minimap button keeps its own), the header shows instead. No `back`: no Back.
+function Frame.setSheet(sheet)
+  Frame.sheet = sheet
+  local b = Frame.frame and Frame.frame.band
+  if not b then return end
+  Frame.syncTabs()
+  local on, left = sheet ~= nil, sheet and sheet.back and 96 or 16
+  call(b.back, on and sheet.back and "Show" or "Hide")
+  call(b.label, "SetText", sheet and sheet.backLabel or "")
+  call(b.title, "SetText", sheet and sheet.title or "")
+  call(b.count, "SetText", sheet and sheet.count or "")
+  call(b.title, "ClearAllPoints")
+  call(b.title, "SetPoint", "LEFT", Frame.frame, "TOPLEFT", left, -(TITLE_H + 1 + TABS_H / 2))
+  local _, w = try(b.title.GetStringWidth, b.title)
+  call(b.rule, "ClearAllPoints")
+  call(b.rule, "SetPoint", "BOTTOMLEFT", Frame.frame, "TOPLEFT", left, -(TITLE_H + TABS_H))
+  call(b.rule, "SetWidth", type(w) == "number" and w > 0 and w or 40)
+  for _, k in ipairs({ "title", "count", "rule" }) do call(b[k], on and "Show" or "Hide") end
+end
 
 function Frame.build()
   if Frame.frame then return Frame.frame end
@@ -407,7 +451,10 @@ function Frame.build()
     call(line, "SetRotation", rot)
   end
   f.close = x
-  local gear = headButton(62, function() Frame.show("settings") end)
+  local gear = headButton(62, function()
+    local sh = Frame.sheet -- Settings while it is open: the button acts as Back
+    if sh and sh.back and sh.title == UI.TEXT.settings then try(sh.back) else Frame.show("settings") end
+  end)
   call(gear, "SetPoint", "RIGHT", x, "LEFT", -4, 0)
   local gl = text(gear, 12, C.body)
   call(gl, "SetPoint", "CENTER")
@@ -444,6 +491,7 @@ function Frame.build()
   call(trule, "SetPoint", "TOPLEFT", 1, -(TITLE_H + TABS_H + 1))
   call(trule, "SetPoint", "TOPRIGHT", -1, -(TITLE_H + TABS_H + 1))
   call(trule, "SetHeight", 1)
+  Frame.buildBand(f)
   Frame.syncTabs()
 
   if type(UISpecialFrames) == "table" then tinsert(UISpecialFrames, Frame.NAME) end
@@ -491,7 +539,8 @@ function Frame.show(key)
   local f = Frame.build()
   if not f then return false end
   local sheet = key == "settings" and key or nil -- not a tab: the sheet laid over the one that is open
-  if not (key and Frame.tabs[key]) then key = Frame.current or (UI.tabList()[1] or {}).key end
+  if not (key and Frame.tabs[key]) then key = Frame.current or (UI.tabList()[1] or {}).key
+  elseif Frame.sheet then try(Frame.sheet.close) end -- a tab was asked for: its sheet gives way
   call(f, "Show") -- shown first: text is set only where it can be seen (the header, status line, tabs, EventsTab render)
   Frame.refresh(true)
   if key then select_(key) end

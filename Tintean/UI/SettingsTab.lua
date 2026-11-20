@@ -24,10 +24,20 @@ local function applyMinimap()
   if b then call(b, UI.minimapHidden() and "Hide" or "Show") end
 end
 
-local function close()
+-- The header in the tab strip's band follows the sheet: Settings has Back, the tour its step count and no Back.
+local function sync()
+  if not mode then return Frame.setSheet(nil) end
+  local tour = mode == "tour"
+  Frame.setSheet({ title = UI.TEXT[mode], count = tour and St.step(step, "").count or nil, close = T.close,
+    backLabel = St.TEXT.back, back = not tour and T.close or nil })
+end
+
+function T.close()
   mode = nil
   call(cv.scroll, "Hide")
+  sync()
 end
+local close = T.close
 
 local function finishTour()
   St.markTour(select(2, try(time)))
@@ -50,9 +60,7 @@ end
 
 local function drawSettings(env)
   local y = 8
-  K.button(X, y, 76, 22, St.TEXT.back, close, { size = 13, align = "left" })
-  K.chevron(X + 4, y + 11, -1, C.moss)
-  y = K.heading(St.TEXT.notices, nil, y + 30)
+  y = K.heading(St.TEXT.notices, nil, y + 30) -- the Back is in the header now; the content keeps its place
   local top = y
   for _, t in ipairs(St.TOGGLES) do y = toggle(t, y) end
   K.panel(X, top, W, y - top)
@@ -87,7 +95,6 @@ end
 local function drawTour(env)
   local s = St.step(step, env.guildName)
   local y = K.heading(s.title, nil, 8)
-  K.text(s.count, X + W, y - 34, { size = 12, color = C.muted, right = true })
   local top = y
   K.scene(s.scene, X + 14, y + 14)
   local ty = y + 14
@@ -96,8 +103,8 @@ local function drawTour(env)
   K.panel(X, top, W, y - top)
   y = y + 12
   local actions = {
-    next = function() step = step + 1; render() end,
-    back = function() step = step - 1; render() end,
+    next = function() step = step + 1; sync(); render() end,
+    back = function() step = step - 1; sync(); render() end,
     skip = finishTour, done = finishTour,
     openSettings = function() finishTour(); T.open("settings") end,
   }
@@ -127,6 +134,7 @@ end
 function T.open(which)
   if not cv.child then return false end
   mode, step = which, 1
+  sync()
   call(cv.scroll, "SetVerticalScroll", 0)
   call(cv.scroll, "Show")
   render()
@@ -155,7 +163,7 @@ function T.build()
     local top = math.max((type(ch) == "number" and ch or 0) - (type(sh) == "number" and sh or 0), 0)
     call(self, "SetVerticalScroll", math.min(math.max((type(cur) == "number" and cur or 0) - delta * 40, 0), top))
   end)
-  call(sf, "SetScript", "OnHide", function() mode = nil; call(sf, "Hide") end) -- the window shut: the sheet is not still open
+  call(sf, "SetScript", "OnHide", function() mode = nil; call(sf, "Hide"); sync() end) -- the window shut: the sheet is not still open
   call(sf, "Hide")
   cv.scroll, cv.child = sf, child
 end

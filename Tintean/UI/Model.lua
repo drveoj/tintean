@@ -22,7 +22,7 @@ UI.COLORS = {
 }
 
 UI.TEXT = {
-  wordmark = "TINTEÁN", horde = "Horde", alliance = "Alliance", settings = "Settings", close = "Close",
+  wordmark = "TINTEÁN", horde = "Horde", alliance = "Alliance", settings = "Settings", tour = "Tour", close = "Close",
   title = "Tinteán", open = "Click to open. Right-click for settings.", drag = "Drag to move it round the map.",
   noData = "Nothing from Tinteán yet.",
   noDataLine = "Events and bulletins arrive at login when the desktop app runs on this computer, or from a guildmate's addon while you're both online.",
