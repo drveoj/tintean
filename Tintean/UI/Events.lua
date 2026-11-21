@@ -41,6 +41,7 @@ local function nameOf(r)
   return bound(b.first .. (type(b.second) == "string" and (" " .. b.second) or ""), 60)
 end
 local function first(name) return type(name) == "string" and name:match("^(%S+)") or nil end
+E.first = first
 
 ---------------------------------------------------------------------------------------------- the calendar
 
@@ -370,6 +371,10 @@ E.TEXT = {
   word = "A word about your sign-up", ask = "Sign up anyway?", signUp = "Sign up", notNow = "Not now",
   refused = "Tinteán didn't accept that change.", -- the formats README's words for a reason it doesn't know; used for any local refusal
   over = "This event is over, so no more sign-ups.",
+  -- One character per person per event (decisions.md 21 Nov section 6; approved by Joe 21 Nov). %s: first names.
+  altInTitle = "%s is signed up already.",
+  altInLine = "You can bring one character. Signing up %s cancels %s's sign-up.",
+  movedLine = "%s's sign-up was cancelled when %s signed up.",
   sent = "Your sign-up is with guildmates online. The website gets it at the next logout by anyone with the desktop app.",
   sentGroup = "Saved on this computer. The desktop app, or the For the website paste, takes it to tintean.net.", -- a group's sign-up goes to no guildmate
   noteLong = "A note can be at most 120 letters.",
@@ -486,6 +491,21 @@ function E.myPart(g, p, meId, pick, mySignup, hint, max)
   return myName, myFirst, st, role
 end
 
+-- The notice for a page where another of the person's characters is signed up already (`alt`: roster key and first name).
+local function altInNotice(eventId, altKey, altFirst, myFirst)
+  return { key = eventId .. ":" .. altKey, title = string.format(E.TEXT.altInTitle, altFirst),
+    line = string.format(E.TEXT.altInLine, myFirst, altFirst) }
+end
+
+-- The notice for a group event page: another of my characters is a yes in `mine` and the one I'm on is not.
+local function groupAltNotice(g, eventId, ids, myFirst)
+  for i = 2, #ids do
+    local s = Store.currentMine(g, "signup", eventId .. ":" .. ids[i])
+    local name = nameOf(Store.current(g, "roster", ids[i]))
+    if name and live(s) and bodyOf(s).status == "yes" then return altInNotice(eventId, ids[i], first(name) or name, myFirst) end
+  end
+end
+
 -- The page for one event. `pick` is the role chosen on the page, if any. Returns nil when the event isn't held.
 local function pageOf(env, eventId, pick)
   local g, now, date = env.guild, env.now, env.date
@@ -510,6 +530,7 @@ local function pageOf(env, eventId, pick)
       p.banner = { gname .. "'s own event." .. (st == "yes" and (" You're in as " .. myName .. ".") or "") }
       p.banner[2] = countsLine(b)
       p.lines = st == nil and { myFirst .. " isn't signed up yet." } or {}
+      if st ~= "yes" then p.notice = groupAltNotice(g, eventId, ids, myFirst) end
     else
       p.banner = { gname .. "'s own event.", groupLine(b) }
     end
@@ -596,7 +617,7 @@ local function pageOf(env, eventId, pick)
   -- my sign-up
   local myName, myFirst, st, role = E.myPart(g, p, meId, pick, Store.current(g, "signup", eventId .. ":" .. tostring(meId)),
     "A note" .. (p.organiser and (" for " .. p.organiser) or "") .. ", if you like") -- "A note, if you like" has no row in the table
-  local lines, altIn = {}, nil
+  local lines, otherAlts, altIn = {}, {}, nil
   for i = 2, #ids do
     local altRec = Store.current(g, "roster", ids[i])
     local altName = nameOf(altRec)
@@ -605,8 +626,11 @@ local function pageOf(env, eventId, pick)
       lines[#lines + 1] = altName .. " is in" .. (ROLE_WORD[bodyOf(s).role] and (", " .. ROLE_WORD[bodyOf(s).role]) or "") .. "."
       altIn = altIn or { name = altName, first = first(altName) or altName, key = ids[i] }
     elseif altName and not live(s) then
-      lines[#lines + 1] = altName .. " hasn't answered. Log in as " .. (first(altName) or altName) .. " to sign up with that character."
+      otherAlts[#otherAlts + 1] = altName .. " hasn't answered. Log in as " .. (first(altName) or altName) .. " if you want to sign up with that character."
     end -- an alt's maybe or can't has no line in the table
+  end
+  if st ~= "yes" and not altIn then -- these lines show only while none of the person's characters is in
+    for _, l in ipairs(otherAlts) do lines[#lines + 1] = l end
   end
   if st == "yes" then
     table.insert(lines, 1, "You're in as " .. myName .. (ROLE_WORD[role] and (", " .. ROLE_WORD[role]) or "") .. ".")
@@ -615,9 +639,7 @@ local function pageOf(env, eventId, pick)
   end
   p.lines = lines
   if altIn and st ~= "yes" then
-    p.notice = { key = eventId .. ":" .. altIn.key, title = altIn.name .. " is in already.",
-      line = "Sign " .. myFirst .. " up as well and both your characters are down for it. To move the sign-up, log in as "
-        .. altIn.first .. " and press Can't there." }
+    p.notice = altInNotice(eventId, altIn.key, altIn.first, myFirst)
   end
   return p
 end

@@ -52,7 +52,7 @@ local function firstWriter(g, r)
     local held = g.records and g.records[Store.slot("bulletin", r.id)]
     by = bodyOf(held).by
   end
-  return type(by) == "string" and by:match("^(%S+)") or nil
+  return E.first(by)
 end
 
 -- Every live bulletin held (pending edits included), unexpired, pinned first and then newest.
@@ -90,7 +90,7 @@ local function foot(g, r, b, date)
   local when
   if who then when = day(date, B.created(g, r))
   else
-    who = type(r.author) == "table" and type(r.author.name) == "string" and r.author.name:match("^(%S+)") or nil
+    who = E.first(type(r.author) == "table" and r.author.name or nil)
     when = day(date, r.at)
   end
   if who and when then parts[#parts + 1] = bound(who, 40) .. ", " .. when

@@ -83,7 +83,11 @@ function N.refusals(g, date)
       local b = bodyOf(held)
       if live(held) and STATUS[b.status] then
         local now = STATUS[b.status] .. (ROLE[b.role] and (", " .. ROLE[b.role]) or "") .. "."
-        if n.web then
+        local author = n.web and b.status == "no" and type(held.author) == "table" and held.author.roster or nil
+        local mover, moved = E.first(nameOf(g, author)), E.first(who)
+        if author and author ~= rosterId and mover and moved and UI.isMine(g, author) then
+          item = { title = string.format(E.TEXT.movedLine, moved, mover) } -- without both names it stays the generic line
+        elseif n.web then
           item = { title = "Your sign-up for " .. title .. " was changed on tintean.net. Here is what it says now.", line = now }
         else
           item = { title = "Someone changed " .. (who and (who .. "'s") or "your") .. " sign-up for " .. title .. " first. It now says:",

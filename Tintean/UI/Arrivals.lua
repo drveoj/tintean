@@ -31,7 +31,7 @@ local ROLE = { tank = "tank", healer = "healer", dps = "damage" }
 local function bodyOf(r) return type(r) == "table" and type(r.body) == "table" and r.body or {} end
 local function live(r) return r ~= nil and not r.deleted end
 local function guildEvent(b) return b.group == nil or b.group == ns.Json.null end
-local function first(s) return type(s) == "string" and s:match("^(%S+)") or nil end
+local first = E.first
 local function noZero(s) return (s:gsub("^(%a+) 0", "%1 ")) end
 
 -- A setting of the account (defaults as SavedVars makes them; a missing table counts as the defaults).
@@ -60,7 +60,7 @@ function A.arrival(env, rec)
   local b = bodyOf(rec)
   if type(b.title) ~= "string" or type(rec.at) ~= "number" or rec.at < now - A.FRESH then return nil end
   local au = type(rec.author) == "table" and rec.author or {}
-  for _, id in ipairs(UI.myIds(g)) do if au.roster == id then return nil end end
+  if UI.isMine(g, au.roster) then return nil end
   local who = E.bound(first(au.name) or "", 40)
   if who == "" then who = A.TEXT.someone end
   local title = E.bound(b.title, 80)

@@ -94,6 +94,12 @@ function UI.myIds(g)
   return ids, person
 end
 
+-- Whether `key` is one of my roster ids (see UI.myIds).
+function UI.isMine(g, key)
+  for _, id in ipairs(UI.myIds(g)) do if id == key then return true end end
+  return false
+end
+
 -- A guild event I could sign up for: live, the guild's own (no group), not cancelled.
 local function open(r)
   local b = bodyOf(r)

@@ -341,18 +341,42 @@ end
 -- person, but only the signed-in person's rows, so the roster key is the check. Pending edits in it stay and are rebased.
 -- Never in a digest, `pd`, `chg` or a transfer: nothing else reads it.
 Inbox.MAX_MINE = 300
+
+-- Whether the roster key is the logged-in character's (`me`, a roster record) or another character of the same person.
+local function ofPerson(guild, me, key)
+  if key == me.id then return true end
+  local person = me.body and me.body.person
+  local rr = type(person) == "string" and Store.current(guild, "roster", key) or nil
+  return rr ~= nil and type(rr.body) == "table" and rr.body.person == person
+end
+
+-- A sign-up of mine that the server now holds as a no, authored by another of my own characters, over a version I held
+-- at a lower rev: the one-character rule moved it. Tell the person, on the same notice as a change from the website.
+local function noticeMoved(guild, me, old, m, now)
+  for slot, r in pairs(m.records) do
+    local was = old.records and old.records[slot]
+    local au = type(r.author) == "table" and r.author.roster or nil
+    local roster = select(2, Validate.splitSignupId(r.id))
+    -- a pending edit on the slot is told by settleMine; a held no is not news again
+    if was and not m.pending[slot] and was.body.status ~= "no" and was.rev < r.rev and not r.deleted and r.body.status == "no" and au and au ~= roster and ofPerson(guild, me, au) then
+      guild.notices[r.cid] = { kind = "changed", cid = r.cid, id = r.id, web = true, at = now }
+    end
+  end
+end
+
 function Inbox.applyMine(guild, payload, counters, paste, now)
   local old = guild.mine or Store.newMine()
   local m = { rev = 0, records = {}, pending = {}, may = {} }
   for slot, p in pairs(old.pending or {}) do m.pending[slot] = p end
   guild.mine = m
-  local raw = payload.mine
+  local raw, meRec = payload.mine, nil
   if isObj(raw) and ns.Edit then
     local ok, me = pcall(ns.Edit.me, guild)
     local b = ok and me and me.body
     -- An unknown character name at read time (no roster record yet) leaves `me` nil: `mine` is empty until the next inbox or paste.
     -- A paste has no person to compare; if the guild already holds one, a paste that names another is not ours.
     local pasteOk = paste and (payload.person == nil or payload.person == null or guild.person == nil or payload.person == guild.person)
+    meRec = me
     local trusted = type(b) == "table" and (pasteOk or (not paste and type(b.person) == "string" and b.person == payload.person))
     if trusted and isInt(raw.rev) and raw.rev >= 0 then
       m.rev = raw.rev
@@ -374,7 +398,8 @@ function Inbox.applyMine(guild, payload, counters, paste, now)
         if head0 then r.rev, r.cid = 0, "srv-0" end
         if rec and rec.kind == "signup" then
           local _, roster = Validate.splitSignupId(rec.id)
-          if roster == me.id then
+          -- the logged-in character's own, and (for the one-character notice) the person's other characters'
+          if ofPerson(guild, me, roster) then
             if head0 then rec.rev, rec.cid = 0, "srv-0" end
             m.records[Store.slot("signup", rec.id)] = rec
           end
@@ -385,9 +410,10 @@ function Inbox.applyMine(guild, payload, counters, paste, now)
     end
   end
   Store.rebaseMine(guild)
-  -- My own edits the server took are settled; one that lost is told. A refusal names its cid; else it was the website's.
   now = now or 0
   guild.notices = guild.notices or {}
+  if meRec then noticeMoved(guild, meRec, old, m, now) end
+  -- My own edits the server took are settled; one that lost is told. A refusal names its cid; else it was the website's.
   for _, l in ipairs(Store.settleMine(guild, now)) do
     local ref = l.r.refused
     local tell = type(ref) == "table" and ref.cid == l.p.cid and { reason = ref.reason, character = l.p.author and l.p.author.name } or nil

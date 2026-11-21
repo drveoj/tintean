@@ -625,6 +625,16 @@ local function drawWho(p, y)
   return y + 6
 end
 
+-- The page's notice (another of my characters is signed up already), until the person closes it.
+local function drawNotice(p, y)
+  if not p.notice or S.closed[p.notice.key] then return y end
+  local h1 = text(p.notice.title, X + 14, y + 10, { size = 14, color = C.title })
+  local h2 = text(p.notice.line, X + 14, y + 12 + h1, { size = 13, width = W - 56 })
+  panel(X, y, W, h1 + h2 + 24)
+  button(X + W - 32, y + 6, 26, 26, "×", function() S.closed[p.notice.key] = true; render() end, { ink = C.muted })
+  return y + h1 + h2 + 42
+end
+
 local function drawSignup(p, y)
   y = heading(E.TEXT.yourSignup, nil, y)
   local m = p.me
@@ -709,18 +719,12 @@ local function drawPage(env)
   if p.state == "group" and not p.me then return y end
   if p.state == "group" then -- a member: the word, then the pills, and no list of who is in (their names stay on the website)
     local ok, word = try(ns.Words.forEvent, p.id)
-    return drawSignup(p, drawWord(p, ok and word or nil, y))
+    return drawSignup(p, drawNotice(p, drawWord(p, ok and word or nil, y)))
   end
   if p.state == "open" then
     local ok, word = try(ns.Words.forEvent, p.id)
     y = drawWord(p, ok and word or nil, y)
-    if p.notice and not S.closed[p.notice.key] then
-      local h1 = text(p.notice.title, X + 14, y + 10, { size = 14, color = C.title })
-      local h2 = text(p.notice.line, X + 14, y + 12 + h1, { size = 13, width = W - 56 })
-      panel(X, y, W, h1 + h2 + 24)
-      button(X + W - 32, y + 6, 26, 26, "×", function() S.closed[p.notice.key] = true; render() end, { ink = C.muted })
-      y = y + h1 + h2 + 42
-    end
+    y = drawNotice(p, y)
     if p.me then y = drawSignup(p, y) elseif p.unlisted then y = drawUnlisted(p, y) end
   end
   y = drawWho(p, y)
