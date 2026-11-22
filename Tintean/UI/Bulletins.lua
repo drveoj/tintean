@@ -119,7 +119,7 @@ function B.tab(env)
       local ev = Store.current(g, "event", b.event)
       local eb = bodyOf(ev)
       if live(ev) and type(eb.title) == "string" then
-        p.event = { id = b.event, title = bound(eb.title, 80), art = UI.Art.slugOf(type(eb.place) == "table" and eb.place.name or nil) }
+        p.event = { id = b.event, title = bound(eb.title, 80), art = UI.Art.slugOfPlace(eb.place) }
       end
     end
     out.pages[#out.pages + 1] = p

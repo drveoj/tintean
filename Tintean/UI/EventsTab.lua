@@ -90,12 +90,12 @@ local function sprite(name, x, y, size, tint)
   if l then pic(x, y, size, size, UI.Art.path(UI.Art.UI), { l, r, t, b }, 1, tint, { kind = "spr", sub = 3 }) end
 end
 
--- A framed place painting; the flame mark in the same frame when the event has no place (or none we have a painting of).
+-- A framed place painting; Art.place gives the campfire when there is no place (or none we have a painting of). The flame
+-- mark is only for a sheet that fails to load.
 local function placePic(slug, x, y, size)
   rect(x - 1, y - 1, size + 2, size + 2, C.lineStrong, 2)
-  local l, r, t, b = nil, nil, nil, nil
-  if slug then l, r, t, b = UI.Art.place(slug) end
-  if l and pic(x, y, size, size, UI.Art.path(UI.Art.PLACES), { l, r, t, b }, 1, nil, { kind = "place" }) then return end
+  local l, r, t, b = UI.Art.place(slug)
+  if pic(x, y, size, size, UI.Art.path(UI.Art.PLACES), { l, r, t, b }, 1, nil, { kind = "place" }) then return end
   rect(x, y, size, size, C.ground, 3)
   pic(x + size * .2, y + size * .2, size * .6, size * .6, "Interface\\AddOns\\Tintean\\mark", nil, 1, nil, { kind = "flame" })
 end

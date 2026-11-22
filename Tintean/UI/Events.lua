@@ -252,7 +252,7 @@ local function row(env, ev, by, ids)
   local b = ev.body
   local c = tally(by[ev.id])
   local r = { id = ev.id, title = bound(b.title, 80) or "an event", group = isGroup(b) or nil, cancelled = b.cancelled or nil,
-    over = ended(b, env.now) or nil, starts = b.starts, art = UI.Art.slugOf(type(b.place) == "table" and b.place.name or nil),
+    over = ended(b, env.now) or nil, starts = b.starts, art = UI.Art.slugOfPlace(b.place),
     short = bound(b.title, 22) }
   r.day, r.time = dayParts(env.date, b.starts)
   if not r.day then return nil end
@@ -518,7 +518,7 @@ local function pageOf(env, eventId, pick)
   local list = signups(g)[eventId] or {}
   local c = tally(list)
   local p = { id = eventId, starts = b.starts, title = bound(b.title, 80) or "an event", when = E.whenText(env, b.starts), meta = metaLine(b, ev),
-    art = UI.Art.slugOf(type(b.place) == "table" and b.place.name or nil) }
+    art = UI.Art.slugOfPlace(b.place) }
   if isGroup(b) then
     p.state = "group"
     local gname = bound(b.group.name, 60) or ""

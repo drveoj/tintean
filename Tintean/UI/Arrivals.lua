@@ -70,7 +70,7 @@ function A.arrival(env, rec)
     if not (day and hm) then return nil end
     return { kind = "event", title = title, chat = who .. " planned " .. title .. ", " .. day .. " at " .. hm .. ".",
       toast = { kind = "event", id = rec.id, title = "New event: " .. title, line = day .. ", " .. hm .. " · " .. who,
-        art = UI.Art.slugOf(type(b.place) == "table" and b.place.name or nil) } }
+        art = UI.Art.slugOfPlace(b.place) } }
   elseif rec.kind == "bulletin" then
     if type(b.expires) == "number" and b.expires <= now then return nil end
     return { kind = "bulletin", title = title, chat = "New bulletin from " .. who .. ": " .. title .. ".",
@@ -133,7 +133,7 @@ function A.reminders(env, done)
           out[#out + 1] = { key = key, id = r.id, starts = b.starts,
             chat = title .. " starts in 15 minutes, at " .. hm .. ". You're in as " .. as .. ".",
             toast = { kind = "event", id = r.id, title = title .. " in 15 minutes", line = hm .. " · you're in as " .. as,
-              art = UI.Art.slugOf(type(b.place) == "table" and b.place.name or nil) } }
+              art = UI.Art.slugOfPlace(b.place) } }
         end
       end
     end

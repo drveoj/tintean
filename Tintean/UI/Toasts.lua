@@ -117,15 +117,9 @@ local function show(t)
   f.toast, f.until_ = t, now() + SHOWN_FOR
   call(f.title, "SetText", t.title)
   call(f.line, "SetText", t.line)
-  local l, r, tp, b = nil, nil, nil, nil
-  if t.art then l, r, tp, b = UI.Art.place(t.art) end
-  if l then -- the place's painting
-    call(f.pic, "SetTexture", UI.Art.path(UI.Art.PLACES))
-    call(f.pic, "SetTexCoord", l, r, tp, b)
-  else -- the flame
-    call(f.pic, "SetTexture", "Interface\\AddOns\\Tintean\\mark")
-    call(f.pic, "SetTexCoord", 0, 1, 0, 1)
-  end
+  local l, r, tp, b = UI.Art.place(t.art) -- the campfire's when the event has no place painting
+  call(f.pic, "SetTexture", UI.Art.path(UI.Art.PLACES))
+  call(f.pic, "SetTexCoord", l, r, tp, b)
   up[#up + 1] = f
   layout()
   call(f, "Show")

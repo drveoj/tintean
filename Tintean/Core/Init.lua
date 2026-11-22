@@ -3,7 +3,7 @@
 local _, ns = ...
 ns = ns or {}
 
-ns.version = "0.1.3"
+ns.version = "0.1.4"
 ns.tag = "Tinteán:"
 
 -- Call fn(...) so that a missing function or an error cannot reach the player.
